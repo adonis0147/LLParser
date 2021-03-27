@@ -1,0 +1,15 @@
+sudo: required
+dist: focal
+
+addons:
+  apt:
+    packages:
+    # install toolchains
+    - openjdk-11-jdk
+    - openjdk-11-jre
+    - maven
+
+language: java
+
+script: mvn clean package
+
