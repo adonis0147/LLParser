@@ -4,10 +4,10 @@ import java.util.LinkedList;
 import java.util.List;
 
 public class Result<T> {
-  Status status;
-  T value;
-  int index;
-  List<String> expected = new LinkedList<>();
+  public Status status;
+  public T value;
+  public int index;
+  public List<String> expected = new LinkedList<>();
 
   Result(Status status, T value, int index) {
     this.status = status;

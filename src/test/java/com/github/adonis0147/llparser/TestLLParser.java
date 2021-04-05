@@ -31,6 +31,13 @@ public class TestLLParser {
     assertEquivalentResults(new Result<String>(Status.FAILURE, 1, "EOF"), result);
   }
 
+  private void assertEquivalentResults(Result expect, Result actual) {
+    assertEquals(expect.status, actual.status);
+    assertEquals(expect.value, actual.value);
+    assertEquals(expect.index, actual.index);
+    assertEquals(expect.expected, actual.expected);
+  }
+
   @Test
   public void testRegex() {
     String pattern = "\\d+";
@@ -403,12 +410,5 @@ public class TestLLParser {
     assertEquivalentResults(new Result<String>(
         Status.SUCCESS, "test", text.length()
     ), result);
-  }
-
-  private void assertEquivalentResults(Result expect, Result actual) {
-    assertEquals(expect.status, actual.status);
-    assertEquals(expect.value, actual.value);
-    assertEquals(expect.index, actual.index);
-    assertEquals(expect.expected, actual.expected);
   }
 }
