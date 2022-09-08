@@ -7,6 +7,8 @@
 #include <regex>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -53,6 +55,8 @@ class LLParser {
     using Status = ParseResult::Status;
     using Attachment = std::any;
     using ParseFunction = ParseResult (*)(const LLParser*, const std::string&, size_t);
+    template <typename Output, typename Input, typename... Ts>
+    using Mapper = Output (*)(Input&&, Ts&&...);
 
     template <typename T>
     LLParser(T&& attachment, const ParseFunction parse_function)
@@ -82,7 +86,7 @@ class LLParser {
                     return ParseResult{Status::SUCCESS, start + literal.length(),
                                        std::string(begin, begin + literal.length())};
                 } else {
-                    return ParseResult{Status::FAILURE, start, nullptr};
+                    return ParseResult{Status::FAILURE, start, std::any()};
                 }
             });
     }
@@ -97,7 +101,39 @@ class LLParser {
                 if (std::regex_search(std::cbegin(text) + start, std::cend(text), match, pattern)) {
                     return ParseResult{Status::SUCCESS, start + match.length(), match.str()};
                 } else {
-                    return ParseResult{Status::FAILURE, start, nullptr};
+                    return ParseResult{Status::FAILURE, start, std::any()};
+                }
+            });
+    }
+
+    template <
+        typename Output, typename Input = std::any, typename Function, typename Allocator,
+        typename... Ts,
+        typename = std::enable_if_t<std::is_convertible_v<Function, Mapper<Output, Input, Ts...>>>>
+    const LLParser* map(const Function mapper, Allocator* allocator, Ts&&... args) const {
+        auto attachment = std::make_tuple(this, mapper, std::make_tuple(std::forward<Ts>(args)...));
+        using PackedType = decltype(attachment);
+
+        return _allocate<LLParser>(
+            allocator, std::move(attachment),
+            [](const auto* parser, const auto& text, auto start) -> auto{
+                const auto& [inner_parser, mapper, arguments] =
+                    std::any_cast<PackedType>(parser->attachment());
+
+                auto result = inner_parser->parse(text, start);
+                if (result.is_success()) {
+                    Output value;
+                    if constexpr (std::is_same_v<Input, std::any>) {
+                        value = std::apply(mapper, std::tuple_cat(std::make_tuple(result.value),
+                                                                  std::move(arguments)));
+                    } else {
+                        value = std::apply(
+                            mapper, std::tuple_cat(std::make_tuple(result.template get<Input>()),
+                                                   std::move(arguments)));
+                    }
+                    return ParseResult{Status::SUCCESS, result.index, std::move(value)};
+                } else {
+                    return ParseResult{Status::FAILURE, result.index, std::any()};
                 }
             });
     }
