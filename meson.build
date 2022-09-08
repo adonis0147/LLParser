@@ -21,11 +21,16 @@ includes = include_directories('include')
 test_sources = []
 subdir('test')
 
+test_cpp_args = '-fsanitize=address'
+test_link_args = '-lasan'
+
 test_name = 'llparser_test'
 test_exe = executable(
   test_name,
   test_sources,
   include_directories : includes,
+  cpp_args : test_cpp_args,
+  link_args : test_link_args,
   dependencies : [gtest_lib, gtest_main_lib]
 )
 test(test_name, test_exe)
