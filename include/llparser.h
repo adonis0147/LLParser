@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "fmt/core.h"
+
 namespace llparser {
 
 struct ParseResult {
@@ -34,22 +36,11 @@ struct ParseResult {
           expectation(expectation_) {}
 
     template <typename T>
-    ParseResult(Status status_, size_t index_, T&& value_, std::string&& expectation_)
-        : status(status_),
-          index(index_),
-          value(std::forward<T>(value_)),
-          expectation(expectation_) {}
-
-    template <typename T>
     static ParseResult Success(size_t index, T&& value_) {
         return ParseResult(SUCCESS, index, std::forward<T>(value_));
     }
 
     static ParseResult Failure(size_t index, std::string_view expectation) {
-        return ParseResult(FAILURE, index, std::any(), expectation);
-    }
-
-    static ParseResult Failure(size_t index, std::string&& expectation) {
         return ParseResult(FAILURE, index, std::any(), expectation);
     }
 
@@ -146,8 +137,7 @@ class LLParser {
                                       regex_pattern)) {
                     return ParseResult::Success(start + match.length(), match.str());
                 } else {
-                    return ParseResult::Failure(start,
-                                                fmt::format("regular expression: {}", pattern));
+                    return ParseResult::Failure(start, pattern);
                 }
             });
     }
@@ -214,6 +204,34 @@ class LLParser {
                     }
                 }
                 return ParseResult::Success(result.index, std::move(values));
+            });
+    }
+
+    template <typename Allocator, typename... Parsers,
+              typename =
+                  std::enable_if_t<(sizeof...(Parsers) > 1) &&
+                                   (std::is_same_v<std::decay_t<Parsers>, const LLParser*> && ...)>>
+    static const LLParser* alternative(Allocator* allocator, Parsers&&... parsers) {
+        std::vector<const LLParser*> collected = {parsers...};
+        return _allocate<LLParser>(
+            allocator, std::move(collected),
+            [](const auto* parser, const auto& text, auto start) -> auto{
+                const auto& parsers =
+                    std::any_cast<std::vector<const LLParser*>>(parser->attachment());
+
+                std::vector<std::string> expectations;
+                expectations.reserve(parsers.size());
+                for (const auto* parser : parsers) {
+                    auto result = parser->parse(text, start);
+                    if (result.is_success()) {
+                        return result;
+                    } else {
+                        expectations.emplace_back(std::move(result.expectation));
+                    }
+                }
+                return ParseResult::Failure(
+                    start,
+                    fmt::format("{}", fmt::join(expectations.begin(), expectations.end(), " OR ")));
             });
     }
 
