@@ -178,6 +178,25 @@ TEST(llparse_test, test_alternative) {
     result = parser->parse(text);
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
+    EXPECT_FALSE(result.value.has_value());
+}
+
+TEST(llparse_test, test_skip_and_then) {
+    ObjectAllocator<LLParser> allocator;
+    const auto* parser = LLParser::string("\"", &allocator)
+                             ->then(LLParser::regex("\\w+", &allocator), &allocator)
+                             ->skip(LLParser::string("\"", &allocator), &allocator);
+    std::string text = "\"123456\"";
+    auto result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ("123456", result.get<std::string>());
+
+    text = "\"123456";
+    result = parser->parse(text);
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_FALSE(result.value.has_value());
 }
 
 }  // namespace llparser

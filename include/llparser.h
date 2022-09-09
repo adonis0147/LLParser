@@ -142,38 +142,6 @@ class LLParser {
             });
     }
 
-    template <
-        typename Output, typename Input = std::any, typename Function, typename Allocator,
-        typename... Ts,
-        typename = std::enable_if_t<std::is_convertible_v<Function, Mapper<Output, Input, Ts...>>>>
-    const LLParser* map(const Function mapper, Allocator* allocator, Ts&&... args) const {
-        auto attachment = std::make_tuple(this, mapper, std::make_tuple(std::forward<Ts>(args)...));
-        using PackedType = decltype(attachment);
-
-        return _allocate<LLParser>(
-            allocator, std::move(attachment),
-            [](const auto* parser, const auto& text, auto start) -> auto{
-                const auto& [inner_parser, mapper, arguments] =
-                    std::any_cast<PackedType>(parser->attachment());
-
-                auto result = inner_parser->parse(text, start);
-                if (result.is_success()) {
-                    Output value;
-                    if constexpr (std::is_same_v<Input, std::any>) {
-                        value = std::apply(mapper, std::tuple_cat(std::make_tuple(result.value),
-                                                                  std::move(arguments)));
-                    } else {
-                        value = std::apply(
-                            mapper, std::tuple_cat(std::make_tuple(result.template get<Input>()),
-                                                   std::move(arguments)));
-                    }
-                    return ParseResult::Success(result.index, std::move(value));
-                } else {
-                    return ParseResult::Failure(result.index, std::move(result.expectation));
-                }
-            });
-    }
-
     template <typename ValueType = std::any, typename Allocator, typename... Parsers,
               typename =
                   std::enable_if_t<(sizeof...(Parsers) > 1) &&
@@ -233,6 +201,54 @@ class LLParser {
                     start,
                     fmt::format("{}", fmt::join(expectations.begin(), expectations.end(), " OR ")));
             });
+    }
+
+    template <
+        typename Output, typename Input = std::any, typename Function, typename Allocator,
+        typename... Ts,
+        typename = std::enable_if_t<std::is_convertible_v<Function, Mapper<Output, Input, Ts...>>>>
+    const LLParser* map(const Function mapper, Allocator* allocator, Ts&&... args) const {
+        auto attachment = std::make_tuple(this, mapper, std::make_tuple(std::forward<Ts>(args)...));
+        using PackedType = decltype(attachment);
+
+        return _allocate<LLParser>(
+            allocator, std::move(attachment),
+            [](const auto* parser, const auto& text, auto start) -> auto{
+                const auto& [inner_parser, mapper, arguments] =
+                    std::any_cast<PackedType>(parser->attachment());
+
+                auto result = inner_parser->parse(text, start);
+                if (result.is_success()) {
+                    Output value;
+                    if constexpr (std::is_same_v<Input, std::any>) {
+                        value = std::apply(mapper, std::tuple_cat(std::make_tuple(result.value),
+                                                                  std::move(arguments)));
+                    } else {
+                        value = std::apply(
+                            mapper, std::tuple_cat(std::make_tuple(result.template get<Input>()),
+                                                   std::move(arguments)));
+                    }
+                    return ParseResult::Success(result.index, std::move(value));
+                } else {
+                    return ParseResult::Failure(result.index, std::move(result.expectation));
+                }
+            });
+    }
+
+    template <typename Allocator>
+    const LLParser* skip(const LLParser* parser, Allocator* allocator) const {
+        using ValueType = std::any;
+        return LLParser::sequence<ValueType>(allocator, this, parser)
+            ->template map<ValueType, std::vector<ValueType>>(
+                [](auto&& values) -> auto{ return values[0]; }, allocator);
+    }
+
+    template <typename Allocator>
+    const LLParser* then(const LLParser* parser, Allocator* allocator) const {
+        using ValueType = std::any;
+        return LLParser::sequence<ValueType>(allocator, this, parser)
+            ->template map<ValueType, std::vector<ValueType>>(
+                [](auto&& values) -> auto{ return values[1]; }, allocator);
     }
 
    private:
