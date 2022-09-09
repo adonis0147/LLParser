@@ -11,7 +11,7 @@ namespace llparser {
 
 using Status = ParseResult::Status;
 
-TEST(llparse_test, test_string_parser) {
+TEST(llparser_test, test_string_parser) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser = LLParser::string("Hello, world!", &allocator);
     std::string text = "Hello, world!";
@@ -25,6 +25,7 @@ TEST(llparse_test, test_string_parser) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("Hello, world!", result.expectation);
 
     text = "hello, world! Hello, world!";
     result = parser->parse(text, strlen("hello, world! "));
@@ -36,14 +37,16 @@ TEST(llparse_test, test_string_parser) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(text.length() - 1, result.index);
     EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("Hello, world!", result.expectation);
 
     result = parser->parse("");
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("Hello, world!", result.expectation);
 }
 
-TEST(llparse_test, test_regex_parser) {
+TEST(llparser_test, test_regex_parser) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser = LLParser::regex("^\\d+", &allocator);
     std::string text = "123456";
@@ -57,6 +60,7 @@ TEST(llparse_test, test_regex_parser) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("^\\d+", result.expectation);
 
     result = parser->parse(text, text.length() - 1);
     EXPECT_TRUE(result.is_success());
@@ -67,9 +71,10 @@ TEST(llparse_test, test_regex_parser) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("^\\d+", result.expectation);
 }
 
-TEST(llparse_test, test_map) {
+TEST(llparser_test, test_map) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser =
         LLParser::regex("^\\d+", &allocator)
@@ -111,6 +116,7 @@ TEST(llparse_test, test_map) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("^\\d+", result.expectation);
 }
 
 template <typename T>
@@ -131,7 +137,7 @@ void expect_eq(const std::vector<T>& expected, const std::vector<T>& actual) {
     }
 }
 
-TEST(llparse_test, test_sequence) {
+TEST(llparser_test, test_sequence) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser =
         LLParser::sequence(&allocator, LLParser::string("\"", &allocator),
@@ -155,9 +161,10 @@ TEST(llparse_test, test_sequence) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(text.length(), result.index);
     EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("\"", result.expectation);
 }
 
-TEST(llparse_test, test_alternative) {
+TEST(llparser_test, test_alternative) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser =
         LLParser::alternative(&allocator,
@@ -177,11 +184,12 @@ TEST(llparse_test, test_alternative) {
     text = "\"123456\"";
     result = parser->parse(text);
     EXPECT_FALSE(result.is_success());
-    EXPECT_EQ(0, result.index);
+    EXPECT_EQ(1, result.index);
     EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("\"", result.expectation);
 }
 
-TEST(llparse_test, test_skip_and_then) {
+TEST(llparser_test, test_skip_and_then) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser = LLParser::string("\"", &allocator)
                              ->then(LLParser::regex("\\w+", &allocator), &allocator)
@@ -197,6 +205,106 @@ TEST(llparse_test, test_skip_and_then) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(text.length(), result.index);
     EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("\"", result.expectation);
+}
+
+TEST(llparser_test, test_or_else) {
+    ObjectAllocator<LLParser> allocator;
+    const auto* parser = LLParser::sequence(&allocator, LLParser::string("\"", &allocator),
+                                            LLParser::string("\"", &allocator))
+                             ->or_else(LLParser::regex("^\\w+", &allocator), &allocator);
+    std::string text = "\"\"";
+    auto result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+
+    text = "123456";
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+
+    text = "\"123456\"";
+    result = parser->parse(text);
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(1, result.index);
+    EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("\"", result.expectation);
+
+    text = "-123456\"";
+    result = parser->parse(text);
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(0, result.index);
+    EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("\" OR ^\\w+", result.expectation);
+}
+
+TEST(llparser_test, test_times_and_many) {
+    ObjectAllocator<LLParser> allocator;
+    const auto* parser = LLParser::regex("\\w+", &allocator)
+                             ->skip(LLParser::regex("\\s*", &allocator), &allocator)
+                             ->times(3, 5, &allocator);
+    std::string text = "repeat repeat";
+    auto result = parser->parse(text);
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("\\w+", result.expectation);
+
+    text = "repeat repeat repeat";
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    expect_eq<std::string>({"repeat", "repeat", "repeat"}, result.get<std::vector<std::any>>());
+
+    parser = LLParser::regex("\\w+", &allocator)
+                 ->skip(LLParser::regex("\\s*", &allocator), &allocator)
+                 ->times<std::string>(3, 5, &allocator);
+
+    text = "repeat repeat repeat repeat repeat";
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    expect_eq<std::string>({"repeat", "repeat", "repeat", "repeat", "repeat"},
+                           result.get<std::vector<std::string>>());
+
+    text = "repeat repeat repeat repeat repeat repeat";
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length() - strlen("repeat"), result.index);
+    expect_eq<std::string>({"repeat", "repeat", "repeat", "repeat", "repeat"},
+                           result.get<std::vector<std::string>>());
+
+    parser = LLParser::regex("\\w+", &allocator)
+                 ->skip(LLParser::regex("\\s*", &allocator), &allocator)
+                 ->atMost(2, &allocator);
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(strlen("repeat ") * 2, result.index);
+    expect_eq<std::string>({"repeat", "repeat"}, result.get<std::vector<std::any>>());
+
+    parser = LLParser::regex("\\w+", &allocator)
+                 ->skip(LLParser::regex("\\s*", &allocator), &allocator)
+                 ->atLeast(7, &allocator);
+    result = parser->parse(text);
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_FALSE(result.value.has_value());
+    EXPECT_EQ("\\w+", result.expectation);
+
+    parser = LLParser::regex("\\w+", &allocator)
+                 ->skip(LLParser::regex("\\s*", &allocator), &allocator)
+                 ->many<std::string>(&allocator);
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    expect_eq<std::string>({"repeat", "repeat", "repeat", "repeat", "repeat", "repeat"},
+                           result.get<std::vector<std::string>>());
+
+    text = "repeat repeat repeat -";
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length() - strlen("-"), result.index);
+    expect_eq<std::string>({"repeat", "repeat", "repeat"}, result.get<std::vector<std::string>>());
 }
 
 }  // namespace llparser
