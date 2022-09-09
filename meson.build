@@ -31,6 +31,6 @@ test_exe = executable(
   include_directories : includes,
   cpp_args : test_cpp_args,
   link_args : test_link_args,
-  dependencies : [gtest_lib, gtest_main_lib]
+  dependencies : [fmt_lib, gtest_lib, gtest_main_lib]
 )
 test(test_name, test_exe)

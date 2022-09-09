@@ -1,5 +1,7 @@
 #pragma once
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <any>
 #include <cstddef>
@@ -18,6 +20,39 @@ struct ParseResult {
    public:
     enum Status { SUCCESS, FAILURE };
 
+    ParseResult() = default;
+
+    template <typename T>
+    ParseResult(Status status_, size_t index_, T&& value_)
+        : status(status_), index(index_), value(std::forward<T>(value_)) {}
+
+    template <typename T>
+    ParseResult(Status status_, size_t index_, T&& value_, std::string_view expectation_)
+        : status(status_),
+          index(index_),
+          value(std::forward<T>(value_)),
+          expectation(expectation_) {}
+
+    template <typename T>
+    ParseResult(Status status_, size_t index_, T&& value_, std::string&& expectation_)
+        : status(status_),
+          index(index_),
+          value(std::forward<T>(value_)),
+          expectation(expectation_) {}
+
+    template <typename T>
+    static ParseResult Success(size_t index, T&& value_) {
+        return ParseResult(SUCCESS, index, std::forward<T>(value_));
+    }
+
+    static ParseResult Failure(size_t index, std::string_view expectation) {
+        return ParseResult(FAILURE, index, std::any(), expectation);
+    }
+
+    static ParseResult Failure(size_t index, std::string&& expectation) {
+        return ParseResult(FAILURE, index, std::any(), expectation);
+    }
+
     bool is_success() { return status == SUCCESS; }
 
     template <typename T>
@@ -28,6 +63,7 @@ struct ParseResult {
     Status status;
     size_t index;
     std::any value;
+    std::string expectation;
 };
 
 template <typename T>
@@ -79,29 +115,39 @@ class LLParser {
             allocator, std::string(literal),
             [](const auto* parser, const auto& text, auto start) -> auto{
                 const auto& literal = std::any_cast<std::string>(parser->attachment());
+
                 const auto& begin = std::cbegin(text) + start;
                 size_t length = std::cend(text) - begin;
                 if (literal.compare(0, literal.length(), text, start,
                                     std::min(literal.length(), length)) == 0) {
-                    return ParseResult{Status::SUCCESS, start + literal.length(),
-                                       std::string(begin, begin + literal.length())};
+                    return ParseResult::Success(start + literal.length(),
+                                                std::string(begin, begin + literal.length()));
                 } else {
-                    return ParseResult{Status::FAILURE, start, std::any()};
+                    return ParseResult::Failure(start, literal);
                 }
             });
     }
 
     template <typename Allocator>
-    static const LLParser* regex(std::string_view pattern, Allocator* allocator) {
+    static const LLParser* regex(std::string_view literal, Allocator* allocator) {
+        std::string pattern(literal);
+        std::regex regex_pattern(pattern);
+        auto attachment = std::make_pair(std::move(pattern), std::move(regex_pattern));
+        using PackedType = decltype(attachment);
+
         return _allocate<LLParser>(
-            allocator, std::regex(std::string(pattern)),
+            allocator, std::move(attachment),
             [](const auto* parser, const auto& text, auto start) -> auto{
-                const auto& pattern = std::any_cast<std::regex>(parser->attachment());
+                const auto& [pattern, regex_pattern] =
+                    std::any_cast<PackedType>(parser->attachment());
+
                 std::smatch match;
-                if (std::regex_search(std::cbegin(text) + start, std::cend(text), match, pattern)) {
-                    return ParseResult{Status::SUCCESS, start + match.length(), match.str()};
+                if (std::regex_search(std::cbegin(text) + start, std::cend(text), match,
+                                      regex_pattern)) {
+                    return ParseResult::Success(start + match.length(), match.str());
                 } else {
-                    return ParseResult{Status::FAILURE, start, std::any()};
+                    return ParseResult::Failure(start,
+                                                fmt::format("regular expression: {}", pattern));
                 }
             });
     }
@@ -131,10 +177,43 @@ class LLParser {
                             mapper, std::tuple_cat(std::make_tuple(result.template get<Input>()),
                                                    std::move(arguments)));
                     }
-                    return ParseResult{Status::SUCCESS, result.index, std::move(value)};
+                    return ParseResult::Success(result.index, std::move(value));
                 } else {
-                    return ParseResult{Status::FAILURE, result.index, std::any()};
+                    return ParseResult::Failure(result.index, std::move(result.expectation));
                 }
+            });
+    }
+
+    template <typename ValueType = std::any, typename Allocator, typename... Parsers,
+              typename =
+                  std::enable_if_t<(sizeof...(Parsers) > 1) &&
+                                   (std::is_same_v<std::decay_t<Parsers>, const LLParser*> && ...)>>
+    static const LLParser* sequence(Allocator* allocator, Parsers&&... parsers) {
+        std::vector<const LLParser*> collected = {parsers...};
+        return _allocate<LLParser>(
+            allocator, std::move(collected),
+            [](const auto* parser, const auto& text, auto start) -> auto{
+                const auto& parsers =
+                    std::any_cast<std::vector<const LLParser*>>(parser->attachment());
+
+                std::vector<ValueType> values;
+                values.reserve(parsers.size());
+                ParseResult result;
+                auto index = start;
+                for (const auto* parser : parsers) {
+                    result = parser->parse(text, index);
+                    if (result.is_success()) {
+                        index = result.index;
+                        if constexpr (std::is_same_v<ValueType, std::any>) {
+                            values.emplace_back(std::move(result.value));
+                        } else {
+                            values.emplace_back(std::move(result.get<ValueType>()));
+                        }
+                    } else {
+                        return ParseResult::Failure(result.index, std::move(result.expectation));
+                    }
+                }
+                return ParseResult::Success(result.index, std::move(values));
             });
     }
 
@@ -143,6 +222,7 @@ class LLParser {
     static T* _allocate(Allocator* allocator, Ts&&... args) {
         return reinterpret_cast<T*>(allocator->allocate(std::forward<Ts>(args)...));
     }
+
     const Attachment _attachment;
     const ParseFunction _parse;
 };

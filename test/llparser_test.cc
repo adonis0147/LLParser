@@ -16,26 +16,31 @@ TEST(llparse_test, test_string_parser) {
     const auto* parser = LLParser::string("Hello, world!", &allocator);
     std::string text = "Hello, world!";
     auto result = parser->parse(text);
-    ASSERT_EQ(Status::SUCCESS, result.status);
-    ASSERT_EQ(text.length(), result.index);
-    ASSERT_EQ(text, result.get<std::string>());
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ(text, result.get<std::string>());
 
     text = "hello, world!";
     result = parser->parse(text);
-    ASSERT_EQ(Status::FAILURE, result.status);
-    ASSERT_EQ(0, result.index);
-    ASSERT_FALSE(result.value.has_value());
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(0, result.index);
+    EXPECT_FALSE(result.value.has_value());
 
     text = "hello, world! Hello, world!";
     result = parser->parse(text, strlen("hello, world! "));
-    ASSERT_EQ(Status::SUCCESS, result.status);
-    ASSERT_EQ(text.length(), result.index);
-    ASSERT_EQ("Hello, world!", result.get<std::string>());
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ("Hello, world!", result.get<std::string>());
 
     result = parser->parse(text, text.length() - 1);
-    ASSERT_EQ(Status::FAILURE, result.status);
-    ASSERT_EQ(text.length() - 1, result.index);
-    ASSERT_FALSE(result.value.has_value());
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(text.length() - 1, result.index);
+    EXPECT_FALSE(result.value.has_value());
+
+    result = parser->parse("");
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(0, result.index);
+    EXPECT_FALSE(result.value.has_value());
 }
 
 TEST(llparse_test, test_regex_parser) {
@@ -43,20 +48,25 @@ TEST(llparse_test, test_regex_parser) {
     const auto* parser = LLParser::regex("^\\d+", &allocator);
     std::string text = "123456";
     auto result = parser->parse(text);
-    ASSERT_EQ(Status::SUCCESS, result.status);
-    ASSERT_EQ(text.length(), result.index);
-    ASSERT_EQ(text, result.get<std::string>());
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ(text, result.get<std::string>());
 
     text = "a123456";
     result = parser->parse(text);
-    ASSERT_EQ(Status::FAILURE, result.status);
-    ASSERT_EQ(0, result.index);
-    ASSERT_FALSE(result.value.has_value());
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(0, result.index);
+    EXPECT_FALSE(result.value.has_value());
 
     result = parser->parse(text, text.length() - 1);
-    ASSERT_EQ(Status::SUCCESS, result.status);
-    ASSERT_EQ(text.length(), result.index);
-    ASSERT_EQ("6", result.get<std::string>());
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ("6", result.get<std::string>());
+
+    result = parser->parse("");
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(0, result.index);
+    EXPECT_FALSE(result.value.has_value());
 }
 
 TEST(llparse_test, test_map) {
@@ -68,20 +78,21 @@ TEST(llparse_test, test_map) {
                 &allocator);
     std::string text = "123456";
     auto result = parser->parse(text);
-    ASSERT_EQ(Status::SUCCESS, result.status);
-    ASSERT_EQ(text.length(), result.index);
-    ASSERT_EQ(123456, result.get<int>());
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ(123456, result.get<int>());
 
     parser = LLParser::regex("^\\d+", &allocator)
                  ->map<int, std::string>(
                      [](auto&& input) -> auto{ return std::stoi(input); }, &allocator);
     result = parser->parse(text);
-    ASSERT_EQ(Status::SUCCESS, result.status);
-    ASSERT_EQ(text.length(), result.index);
-    ASSERT_EQ(123456, result.get<int>());
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ(123456, result.get<int>());
 
     std::vector<int> results;
-    ASSERT_TRUE(results.empty());
+    EXPECT_TRUE(results.empty());
+
     parser = LLParser::regex("^\\d+", &allocator)
                  ->map<int, std::string>(
                      [](auto&& input, auto&& results) -> auto{
@@ -91,9 +102,59 @@ TEST(llparse_test, test_map) {
                      },
                      &allocator, &results);
     result = parser->parse(text);
-    ASSERT_EQ(Status::SUCCESS, result.status);
-    ASSERT_EQ(1, results.size());
-    ASSERT_EQ(123456, results[0]);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ(1, results.size());
+    EXPECT_EQ(123456, results[0]);
+
+    result = parser->parse("");
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(0, result.index);
+    EXPECT_FALSE(result.value.has_value());
+}
+
+template <typename T>
+void expect_eq(const std::vector<T>& expected, const std::vector<std::any>& actual) {
+    EXPECT_EQ(expected.size(), actual.size());
+    for (auto [p, q] = std::make_pair(expected.begin(), actual.begin());
+         p != expected.end() && q != actual.end(); ++p, ++q) {
+        EXPECT_EQ(*p, std::any_cast<T>(*q));
+    }
+}
+
+template <typename T>
+void expect_eq(const std::vector<T>& expected, const std::vector<T>& actual) {
+    EXPECT_EQ(expected.size(), actual.size());
+    for (auto [p, q] = std::make_pair(expected.begin(), actual.begin());
+         p != expected.end() && q != actual.end(); ++p, ++q) {
+        EXPECT_EQ(*p, *q);
+    }
+}
+
+TEST(llparse_test, test_sequence) {
+    ObjectAllocator<LLParser> allocator;
+    const auto* parser =
+        LLParser::sequence(&allocator, LLParser::string("\"", &allocator),
+                           LLParser::regex("\\w+", &allocator), LLParser::string("\"", &allocator));
+    std::string text = R"("literal")";
+    auto result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    expect_eq<std::string>({"\"", "literal", "\""}, result.get<std::vector<std::any>>());
+
+    parser = LLParser::sequence<std::string>(&allocator, LLParser::string("\"", &allocator),
+                                             LLParser::regex("\\w+", &allocator),
+                                             LLParser::string("\"", &allocator));
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    expect_eq<std::string>({"\"", "literal", "\""}, result.get<std::vector<std::string>>());
+
+    text = "\"123456";
+    result = parser->parse(text);
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_FALSE(result.value.has_value());
 }
 
 }  // namespace llparser
