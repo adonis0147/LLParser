@@ -16,7 +16,7 @@ gtest = cmake.subproject('googletest')
 gtest_lib = gtest.dependency('gtest')
 gtest_main_lib = gtest.dependency('gtest_main')
 
-includes = include_directories('include')
+includes = include_directories(['include', 'examples'])
 
 test_sources = []
 subdir('test')

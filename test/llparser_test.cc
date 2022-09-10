@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include <llparser.h>
+#include <llparser/llparser.h>
 
 #include <any>
 #include <cstddef>
@@ -11,7 +11,7 @@ namespace llparser {
 
 using Status = ParseResult::Status;
 
-TEST(llparser_test, test_string_parser) {
+TEST(LLParserTest, TestStringParser) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser = LLParser::string("Hello, world!", &allocator);
     std::string text = "Hello, world!";
@@ -46,7 +46,7 @@ TEST(llparser_test, test_string_parser) {
     EXPECT_EQ("Hello, world!", result.expectation);
 }
 
-TEST(llparser_test, test_regex_parser) {
+TEST(LLParserTest, TestRegexParser) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser = LLParser::regex("^\\d+", &allocator);
     std::string text = "123456";
@@ -74,7 +74,7 @@ TEST(llparser_test, test_regex_parser) {
     EXPECT_EQ("^\\d+", result.expectation);
 }
 
-TEST(llparser_test, test_map) {
+TEST(LLParserTest, TestMap) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser =
         LLParser::regex("^\\d+", &allocator)
@@ -137,7 +137,7 @@ void expect_eq(const std::vector<T>& expected, const std::vector<T>& actual) {
     }
 }
 
-TEST(llparser_test, test_sequence) {
+TEST(LLParserTest, TestSequence) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser =
         LLParser::sequence(&allocator, LLParser::string("\"", &allocator),
@@ -164,7 +164,7 @@ TEST(llparser_test, test_sequence) {
     EXPECT_EQ("\"", result.expectation);
 }
 
-TEST(llparser_test, test_alternative) {
+TEST(LLParserTest, TestAlternative) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser =
         LLParser::alternative(&allocator,
@@ -189,7 +189,7 @@ TEST(llparser_test, test_alternative) {
     EXPECT_EQ("\"", result.expectation);
 }
 
-TEST(llparser_test, test_skip_and_then) {
+TEST(LLParserTest, TestSkipAndThen) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser = LLParser::string("\"", &allocator)
                              ->then(LLParser::regex("\\w+", &allocator), &allocator)
@@ -208,7 +208,7 @@ TEST(llparser_test, test_skip_and_then) {
     EXPECT_EQ("\"", result.expectation);
 }
 
-TEST(llparser_test, test_or_else) {
+TEST(LLParserTest, TestOrElse) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser = LLParser::sequence(&allocator, LLParser::string("\"", &allocator),
                                             LLParser::string("\"", &allocator))
@@ -238,7 +238,7 @@ TEST(llparser_test, test_or_else) {
     EXPECT_EQ("\" OR ^\\w+", result.expectation);
 }
 
-TEST(llparser_test, test_times_and_many) {
+TEST(LLParserTest, TestTimesAndMany) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser = LLParser::regex("\\w+", &allocator)
                              ->skip(LLParser::regex("\\s*", &allocator), &allocator)

@@ -51,8 +51,8 @@ struct ParseResult {
         return std::any_cast<T>(value);
     }
 
-    Status status;
-    size_t index;
+    Status status = {};
+    size_t index = {};
     std::any value;
     std::string expectation;
 };
@@ -101,6 +101,15 @@ class LLParser {
     }
 
     template <typename Allocator>
+    static const LLParser* lazy(const LLParser** parser_pointer, Allocator* allocator) {
+        return _allocate<LLParser>(
+            allocator, parser_pointer, [](const auto* parser, const auto& text, auto start) -> auto{
+                const auto** inner_parser = std::any_cast<const LLParser**>(parser->attachment());
+                return (*inner_parser)->parse(text, start);
+            });
+    }
+
+    template <typename Allocator>
     static const LLParser* string(std::string_view literal, Allocator* allocator) {
         return _allocate<LLParser>(
             allocator, std::string(literal),
@@ -121,21 +130,26 @@ class LLParser {
 
     template <typename Allocator>
     static const LLParser* regex(std::string_view literal, Allocator* allocator) {
+        return LLParser::regex(literal, 0, allocator);
+    }
+
+    template <typename Allocator>
+    static const LLParser* regex(std::string_view literal, int group, Allocator* allocator) {
         std::string pattern(literal);
-        std::regex regex_pattern(pattern);
-        auto attachment = std::make_pair(std::move(pattern), std::move(regex_pattern));
+        std::regex regex_pattern(fmt::format("^(?:{})", pattern));
+        auto attachment = std::make_tuple(std::move(pattern), group, std::move(regex_pattern));
         using PackedType = decltype(attachment);
 
         return _allocate<LLParser>(
             allocator, std::move(attachment),
             [](const auto* parser, const auto& text, auto start) -> auto{
-                const auto& [pattern, regex_pattern] =
+                const auto& [pattern, group, regex_pattern] =
                     std::any_cast<PackedType>(parser->attachment());
 
                 std::smatch match;
                 if (std::regex_search(std::cbegin(text) + start, std::cend(text), match,
                                       regex_pattern)) {
-                    return ParseResult::Success(start + match.length(), match.str());
+                    return ParseResult::Success(start + match[group].length(), match[group].str());
                 } else {
                     return ParseResult::Failure(start, pattern);
                 }
@@ -274,7 +288,7 @@ class LLParser {
                     std::any_cast<PackedType>(parser->attachment());
 
                 std::vector<ValueType> values;
-                ParseResult result;
+                ParseResult result = ParseResult::Success(start, std::any());
                 auto index = start;
                 for (uint32_t i = 0; i < max; ++i) {
                     result = inner_parser->parse(text, index);
@@ -317,7 +331,7 @@ class LLParser {
                 const auto* inner_parser = std::any_cast<const LLParser*>(parser->attachment());
 
                 std::vector<ValueType> values;
-                ParseResult result;
+                ParseResult result = ParseResult::Success(start, std::any());
                 auto index = start;
                 while (index < text.length()) {
                     result = inner_parser->parse(text, index);
@@ -335,6 +349,28 @@ class LLParser {
                 }
                 return ParseResult::Success(result.index, std::move(values));
             });
+    }
+
+    template <typename Allocator>
+    static const LLParser* eof(Allocator* allocator) {
+        return _allocate<LLParser>(
+            allocator, nullptr, [](const auto*, const auto& text, auto start) -> auto{
+                if (start < text.length()) {
+                    return ParseResult::Failure(start, "EOF");
+                } else {
+                    return ParseResult::Success(start, nullptr);
+                }
+            });
+    }
+
+    template <typename Allocator>
+    static const LLParser* whitespaces(Allocator* allocator) {
+        return LLParser::regex("\\s+", allocator);
+    }
+
+    template <typename Allocator>
+    static const LLParser* optional_whitespaces(Allocator* allocator) {
+        return LLParser::regex("\\s*", allocator);
     }
 
    private:
