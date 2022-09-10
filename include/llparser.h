@@ -41,10 +41,10 @@ struct ParseResult {
     }
 
     static ParseResult Failure(size_t index, std::string_view expectation) {
-        return ParseResult(FAILURE, index, std::any(), expectation);
+        return {FAILURE, index, std::any(), expectation};
     }
 
-    bool is_success() { return status == SUCCESS; }
+    bool is_success() const { return status == SUCCESS; }
 
     template <typename T>
     T get() {

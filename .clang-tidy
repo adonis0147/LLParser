@@ -1,0 +1,12 @@
+---
+Checks: |
+  -*,
+  clang-analyzer-*,
+  google-*,
+  performance-*,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -modernize-use-nodiscard,
+  readability-*,
+  -readability-else-after-return,
