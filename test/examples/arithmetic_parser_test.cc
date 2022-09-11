@@ -9,7 +9,7 @@ namespace llparser::arithmetic {
 TEST(ArithmeticParserTest, TestTokens) {
     ObjectAllocator<LLParser> allocator;
     const auto* number_parser = Parser::NUMBER_LITERAL->map<int, std::string>(
-        [](auto&& input) -> auto{ return std::stoi(input); }, &allocator);
+        &allocator, [](auto&& input) -> auto{ return std::stoi(input); });
     EXPECT_EQ(123456, number_parser->parse("123456").get<int>());
     EXPECT_EQ(123456, number_parser->parse("123456 \n\t ").get<int>());
 

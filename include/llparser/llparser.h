@@ -101,7 +101,7 @@ class LLParser {
     }
 
     template <typename Allocator>
-    static const LLParser* lazy(const LLParser** parser_pointer, Allocator* allocator) {
+    static const LLParser* lazy(Allocator* allocator, const LLParser** parser_pointer) {
         return _allocate<LLParser>(
             allocator, parser_pointer, [](const auto* parser, const auto& text, auto start) -> auto{
                 const auto** inner_parser = std::any_cast<const LLParser**>(parser->attachment());
@@ -110,7 +110,7 @@ class LLParser {
     }
 
     template <typename Allocator>
-    static const LLParser* string(std::string_view literal, Allocator* allocator) {
+    static const LLParser* string(Allocator* allocator, std::string_view literal) {
         return _allocate<LLParser>(
             allocator, std::string(literal),
             [](const auto* parser, const auto& text, auto start) -> auto{
@@ -129,12 +129,12 @@ class LLParser {
     }
 
     template <typename Allocator>
-    static const LLParser* regex(std::string_view literal, Allocator* allocator) {
-        return LLParser::regex(literal, 0, allocator);
+    static const LLParser* regex(Allocator* allocator, std::string_view literal) {
+        return LLParser::regex(allocator, literal, 0);
     }
 
     template <typename Allocator>
-    static const LLParser* regex(std::string_view literal, int group, Allocator* allocator) {
+    static const LLParser* regex(Allocator* allocator, std::string_view literal, int group) {
         std::string pattern(literal);
         std::regex regex_pattern(fmt::format("^(?:{})", pattern));
         auto attachment = std::make_tuple(std::move(pattern), group, std::move(regex_pattern));
@@ -228,7 +228,7 @@ class LLParser {
         typename Output, typename Input = std::any, typename Function, typename Allocator,
         typename... Ts,
         typename = std::enable_if_t<std::is_convertible_v<Function, Mapper<Output, Input, Ts...>>>>
-    const LLParser* map(const Function mapper, Allocator* allocator, Ts&&... args) const {
+    const LLParser* map(Allocator* allocator, const Function mapper, Ts&&... args) const {
         auto attachment = std::make_tuple(this, mapper, std::make_tuple(std::forward<Ts>(args)...));
         using PackedType = decltype(attachment);
 
@@ -242,12 +242,14 @@ class LLParser {
                 if (result.is_success()) {
                     Output value;
                     if constexpr (std::is_same_v<Input, std::any>) {
-                        value = std::apply(mapper, std::tuple_cat(std::make_tuple(result.value),
-                                                                  std::move(arguments)));
+                        value = std::apply(mapper,
+                                           std::tuple_cat(std::make_tuple(std::move(result.value)),
+                                                          std::move(arguments)));
                     } else {
                         value = std::apply(
-                            mapper, std::tuple_cat(std::make_tuple(result.template get<Input>()),
-                                                   std::move(arguments)));
+                            mapper,
+                            std::tuple_cat(std::make_tuple(std::move(result.template get<Input>())),
+                                           std::move(arguments)));
                     }
                     return ParseResult::Success(result.index, std::move(value));
                 } else {
@@ -257,28 +259,28 @@ class LLParser {
     }
 
     template <typename Allocator>
-    const LLParser* skip(const LLParser* parser, Allocator* allocator) const {
+    const LLParser* skip(Allocator* allocator, const LLParser* parser) const {
         using ValueType = std::any;
         return LLParser::sequence<ValueType>(allocator, this, parser)
             ->template map<ValueType, std::vector<ValueType>>(
-                [](auto&& values) -> auto{ return values[0]; }, allocator);
+                allocator, [](auto&& values) -> auto{ return values[0]; });
     }
 
     template <typename Allocator>
-    const LLParser* then(const LLParser* parser, Allocator* allocator) const {
+    const LLParser* then(Allocator* allocator, const LLParser* parser) const {
         using ValueType = std::any;
         return LLParser::sequence<ValueType>(allocator, this, parser)
             ->template map<ValueType, std::vector<ValueType>>(
-                [](auto&& values) -> auto{ return values[1]; }, allocator);
+                allocator, [](auto&& values) -> auto{ return values[1]; });
     }
 
     template <typename Allocator>
-    const LLParser* or_else(const LLParser* parser, Allocator* allocator) const {
+    const LLParser* or_else(Allocator* allocator, const LLParser* parser) const {
         return LLParser::alternative(allocator, this, parser);
     }
 
     template <typename ValueType = std::any, typename Allocator>
-    const LLParser* times(uint32_t min, uint32_t max, Allocator* allocator) const {
+    const LLParser* times(Allocator* allocator, uint32_t min, uint32_t max) const {
         auto attachment = std::make_tuple(this, min, max);
         using PackedType = decltype(attachment);
         return _allocate<LLParser>(
@@ -294,7 +296,8 @@ class LLParser {
                     result = inner_parser->parse(text, index);
                     if (!result.is_success()) {
                         if (i < min) {
-                            return ParseResult::Failure(result.index, result.expectation);
+                            return ParseResult::Failure(result.index,
+                                                        std::move(result.expectation));
                         }
                         break;
                     }
@@ -310,18 +313,18 @@ class LLParser {
     }
 
     template <typename ValueType = std::any, typename Allocator>
-    const LLParser* times(uint32_t num, Allocator* allocator) const {
-        return this->times(num, num, allocator);
+    const LLParser* times(Allocator* allocator, uint32_t num) const {
+        return this->times(allocator, num, num);
     }
 
     template <typename ValueType = std::any, typename Allocator>
-    const LLParser* atMost(uint32_t num, Allocator* allocator) const {
-        return this->times(0, num, allocator);
+    const LLParser* atMost(Allocator* allocator, uint32_t num) const {
+        return this->times(allocator, 0, num);
     }
 
     template <typename ValueType = std::any, typename Allocator>
-    const LLParser* atLeast(uint32_t num, Allocator* allocator) const {
-        return this->times(num, std::numeric_limits<uint32_t>::max(), allocator);
+    const LLParser* atLeast(Allocator* allocator, uint32_t num) const {
+        return this->times(allocator, num, std::numeric_limits<uint32_t>::max());
     }
 
     template <typename ValueType = std::any, typename Allocator>
@@ -365,12 +368,12 @@ class LLParser {
 
     template <typename Allocator>
     static const LLParser* whitespaces(Allocator* allocator) {
-        return LLParser::regex("\\s+", allocator);
+        return LLParser::regex(allocator, "\\s+");
     }
 
     template <typename Allocator>
     static const LLParser* optional_whitespaces(Allocator* allocator) {
-        return LLParser::regex("\\s*", allocator);
+        return LLParser::regex(allocator, "\\s*");
     }
 
    private:

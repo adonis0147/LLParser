@@ -20,8 +20,8 @@ class Parser {
     static const LLParser* EXPRESSION_LITERAL;
 
     static const LLParser* tokenize(const LLParser* parser) {
-        return parser->skip(LLParser::optional_whitespaces(&Parser::_allocator),
-                            &Parser::_allocator);
+        return parser->skip(&Parser::_allocator,
+                            LLParser::optional_whitespaces(&Parser::_allocator));
     }
 
     static auto parse(std::string_view text) {
@@ -40,23 +40,23 @@ class Parser {
 ObjectAllocator<LLParser> Parser::_allocator;
 
 const LLParser* Parser::NUMBER_LITERAL =
-    Parser::tokenize(LLParser::regex("\\d+", &Parser::_allocator));
+    Parser::tokenize(LLParser::regex(&Parser::_allocator, "\\d+"));
 
 const LLParser* Parser::OPERATOR_LITERAL =
-    Parser::tokenize(LLParser::regex("\\+|-", &Parser::_allocator));
+    Parser::tokenize(LLParser::regex(&Parser::_allocator, "\\+|-"));
 
 const LLParser* Parser::LEFT_BRACE_LITERAL =
-    Parser::tokenize(LLParser::string("(", &Parser::_allocator));
+    Parser::tokenize(LLParser::string(&Parser::_allocator, "("));
 
 const LLParser* Parser::RIGHT_BRACE_LITERAL =
-    Parser::tokenize(LLParser::string(")", &Parser::_allocator));
+    Parser::tokenize(LLParser::string(&Parser::_allocator, ")"));
 
 const LLParser* Parser::OPERAND_LITERAL = Parser::NUMBER_LITERAL->or_else(
+    &Parser::_allocator,
     Parser::LEFT_BRACE_LITERAL
-        ->then(LLParser::lazy(&Parser::EXPRESSION_LITERAL, &Parser::_allocator),
-               &Parser::_allocator)
-        ->skip(Parser::RIGHT_BRACE_LITERAL, &Parser::_allocator),
-    &Parser::_allocator);
+        ->then(&Parser::_allocator,
+               LLParser::lazy(&Parser::_allocator, &Parser::EXPRESSION_LITERAL))
+        ->skip(&Parser::_allocator, Parser::RIGHT_BRACE_LITERAL));
 
 const LLParser* Parser::EXPRESSION_LITERAL =
     LLParser::sequence(&Parser::_allocator, Parser::OPERAND_LITERAL,
@@ -64,7 +64,7 @@ const LLParser* Parser::EXPRESSION_LITERAL =
                            &Parser::_allocator, Parser::OPERATOR_LITERAL, Parser::OPERAND_LITERAL)
                            ->many<std::vector<std::string>>(&Parser::_allocator))
         ->map<std::string, std::vector<std::any>>(
-            [](auto&& input) -> auto{
+            &Parser::_allocator, [](auto&& input) -> auto{
                 std::string left;
                 left = std::any_cast<std::string>(input[0]);
                 const auto& parts = std::any_cast<std::vector<std::vector<std::string>>>(input[1]);
@@ -76,7 +76,6 @@ const LLParser* Parser::EXPRESSION_LITERAL =
                     left = out.str();
                 }
                 return left;
-            },
-            &Parser::_allocator);
+            });
 
 }  // namespace llparser::arithmetic
