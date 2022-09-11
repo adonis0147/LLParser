@@ -11,6 +11,24 @@ namespace llparser {
 
 using Status = ParseResult::Status;
 
+template <typename T>
+void expect_eq(const std::vector<T>& expected, const std::vector<std::any>& actual) {
+    EXPECT_EQ(expected.size(), actual.size());
+    for (auto [p, q] = std::make_pair(expected.begin(), actual.begin());
+         p != expected.end() && q != actual.end(); ++p, ++q) {
+        EXPECT_EQ(*p, std::any_cast<T>(*q));
+    }
+}
+
+template <typename T>
+void expect_eq(const std::vector<T>& expected, const std::vector<T>& actual) {
+    EXPECT_EQ(expected.size(), actual.size());
+    for (auto [p, q] = std::make_pair(expected.begin(), actual.begin());
+         p != expected.end() && q != actual.end(); ++p, ++q) {
+        EXPECT_EQ(*p, *q);
+    }
+}
+
 TEST(LLParserTest, TestStringParser) {
     ObjectAllocator<LLParser> allocator;
     const auto* parser = LLParser::string(&allocator, "Hello, world!");
@@ -25,7 +43,7 @@ TEST(LLParserTest, TestStringParser) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("Hello, world!", result.expectation);
+    expect_eq<std::string>({"Hello, world!"}, result.expectations);
 
     text = "hello, world! Hello, world!";
     result = parser->parse(text, strlen("hello, world! "));
@@ -37,13 +55,33 @@ TEST(LLParserTest, TestStringParser) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(text.length() - 1, result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("Hello, world!", result.expectation);
+    expect_eq<std::string>({"Hello, world!"}, result.expectations);
 
     result = parser->parse("");
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("Hello, world!", result.expectation);
+    expect_eq<std::string>({"Hello, world!"}, result.expectations);
+
+    text = "hello, world!";
+    parser = LLParser::string<false>(&allocator, "Hello, world!");
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ("hello, world!", result.get<std::string>());
+
+    result = parser->parse(text, text.length() - 1);
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(text.length() - 1, result.index);
+    EXPECT_FALSE(result.value.has_value());
+    expect_eq<std::string>({"Hello, world!"}, result.expectations);
+
+    text = "hello, WorLd! Hello, world!";
+    parser = LLParser::string<false>(&allocator, "Hello, world!");
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(strlen("hello, WorLd!"), result.index);
+    EXPECT_EQ("hello, WorLd!", result.get<std::string>());
 }
 
 TEST(LLParserTest, TestRegexParser) {
@@ -60,7 +98,7 @@ TEST(LLParserTest, TestRegexParser) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\\d+", result.expectation);
+    expect_eq<std::string>({"\\d+"}, result.expectations);
 
     result = parser->parse(text, text.length() - 1);
     EXPECT_TRUE(result.is_success());
@@ -71,7 +109,47 @@ TEST(LLParserTest, TestRegexParser) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\\d+", result.expectation);
+    expect_eq<std::string>({"\\d+"}, result.expectations);
+
+    parser = LLParser::regex(&allocator, "(Hello), (world)", 1);
+    text = "Hello, world!";
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length() - strlen("!"), result.index);
+    EXPECT_EQ("Hello", result.get<std::string>());
+
+    parser = LLParser::regex(&allocator, "(Hello), (world)", 2);
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length() - strlen("!"), result.index);
+    EXPECT_EQ("world", result.get<std::string>());
+
+    parser = LLParser::regex(&allocator, "AND");
+    text = "aNd";
+    result = parser->parse(text);
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(0, result.index);
+    EXPECT_FALSE(result.value.has_value());
+    expect_eq({"AND"}, result.expectations);
+
+    parser = LLParser::regex<false>(&allocator, "AND");
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_EQ("aNd", result.get<std::string>());
+
+    parser = LLParser::regex<false>(&allocator, "(Hello), (world)", 1);
+    text = "hello, world!";
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length() - strlen("!"), result.index);
+    EXPECT_EQ("hello", result.get<std::string>());
+
+    parser = LLParser::regex<false>(&allocator, "(Hello), (world)", 2);
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length() - strlen("!"), result.index);
+    EXPECT_EQ("world", result.get<std::string>());
 }
 
 TEST(LLParserTest, TestMap) {
@@ -116,25 +194,7 @@ TEST(LLParserTest, TestMap) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\\d+", result.expectation);
-}
-
-template <typename T>
-void expect_eq(const std::vector<T>& expected, const std::vector<std::any>& actual) {
-    EXPECT_EQ(expected.size(), actual.size());
-    for (auto [p, q] = std::make_pair(expected.begin(), actual.begin());
-         p != expected.end() && q != actual.end(); ++p, ++q) {
-        EXPECT_EQ(*p, std::any_cast<T>(*q));
-    }
-}
-
-template <typename T>
-void expect_eq(const std::vector<T>& expected, const std::vector<T>& actual) {
-    EXPECT_EQ(expected.size(), actual.size());
-    for (auto [p, q] = std::make_pair(expected.begin(), actual.begin());
-         p != expected.end() && q != actual.end(); ++p, ++q) {
-        EXPECT_EQ(*p, *q);
-    }
+    expect_eq<std::string>({"\\d+"}, result.expectations);
 }
 
 TEST(LLParserTest, TestSequence) {
@@ -161,7 +221,7 @@ TEST(LLParserTest, TestSequence) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(text.length(), result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\"", result.expectation);
+    expect_eq<std::string>({"\""}, result.expectations);
 }
 
 TEST(LLParserTest, TestAlternative) {
@@ -186,7 +246,7 @@ TEST(LLParserTest, TestAlternative) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(1, result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\"", result.expectation);
+    expect_eq<std::string>({"\""}, result.expectations);
 }
 
 TEST(LLParserTest, TestSkipAndThen) {
@@ -205,7 +265,7 @@ TEST(LLParserTest, TestSkipAndThen) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(text.length(), result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\"", result.expectation);
+    expect_eq<std::string>({"\""}, result.expectations);
 }
 
 TEST(LLParserTest, TestOrElse) {
@@ -228,14 +288,14 @@ TEST(LLParserTest, TestOrElse) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(1, result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\"", result.expectation);
+    expect_eq<std::string>({"\""}, result.expectations);
 
     text = "-123456\"";
     result = parser->parse(text);
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(0, result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\" OR \\w+", result.expectation);
+    expect_eq<std::string>({"\"", "\\w+"}, result.expectations);
 }
 
 TEST(LLParserTest, TestTimesAndMany) {
@@ -248,7 +308,7 @@ TEST(LLParserTest, TestTimesAndMany) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(text.length(), result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\\w+", result.expectation);
+    expect_eq<std::string>({"\\w+"}, result.expectations);
 
     text = "repeat repeat repeat";
     result = parser->parse(text);
@@ -289,7 +349,7 @@ TEST(LLParserTest, TestTimesAndMany) {
     EXPECT_FALSE(result.is_success());
     EXPECT_EQ(text.length(), result.index);
     EXPECT_FALSE(result.value.has_value());
-    EXPECT_EQ("\\w+", result.expectation);
+    expect_eq<std::string>({"\\w+"}, result.expectations);
 
     parser = LLParser::regex(&allocator, "\\w+")
                  ->skip(&allocator, LLParser::regex(&allocator, "\\s*"))
@@ -305,6 +365,29 @@ TEST(LLParserTest, TestTimesAndMany) {
     EXPECT_TRUE(result.is_success());
     EXPECT_EQ(text.length() - strlen("-"), result.index);
     expect_eq<std::string>({"repeat", "repeat", "repeat"}, result.get<std::vector<std::string>>());
+
+    parser = LLParser::regex(&allocator, "\\w+")
+                 ->skip(&allocator, LLParser::regex(&allocator, "\\s*"))
+                 ->times(&allocator, 3);
+
+    text = "repeat repeat";
+    result = parser->parse(text);
+    EXPECT_FALSE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    EXPECT_FALSE(result.value.has_value());
+    expect_eq<std::string>({"\\w+"}, result.expectations);
+
+    text = "repeat repeat repeat";
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length(), result.index);
+    expect_eq<std::string>({"repeat", "repeat", "repeat"}, result.get<std::vector<std::any>>());
+
+    text = "repeat repeat repeat repeat";
+    result = parser->parse(text);
+    EXPECT_TRUE(result.is_success());
+    EXPECT_EQ(text.length() - strlen("repeat"), result.index);
+    expect_eq<std::string>({"repeat", "repeat", "repeat"}, result.get<std::vector<std::any>>());
 }
 
 }  // namespace llparser

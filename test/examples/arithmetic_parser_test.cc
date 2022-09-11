@@ -30,57 +30,71 @@ TEST(ArithmeticParserTest, TestTokens) {
 
 TEST(ArithmeticParserTest, TestExpressions) {
     {
-        auto [result, ok] = Parser::parse("123456");
+        auto [result, ok, _] = Parser::parse("123456");
         EXPECT_TRUE(ok);
         EXPECT_EQ("123456", result);
     }
 
     {
-        auto [result, ok] = Parser::parse("1 + 2");
+        auto [result, ok, _] = Parser::parse("1 + 2");
         EXPECT_TRUE(ok);
         EXPECT_EQ("[+, 1, 2]", result);
     }
 
     {
-        auto [result, ok] = Parser::parse("1 + 2 + 3");
+        auto [result, ok, _] = Parser::parse("1 + 2 + 3");
         EXPECT_TRUE(ok);
         EXPECT_EQ("[+, [+, 1, 2], 3]", result);
     }
 
     {
-        auto [result, ok] = Parser::parse("1 + 2 + 3 - 4");
+        auto [result, ok, _] = Parser::parse("1 + 2 + 3 - 4");
         EXPECT_TRUE(ok);
         EXPECT_EQ("[-, [+, [+, 1, 2], 3], 4]", result);
     }
 
     {
-        auto [result, ok] = Parser::parse("(1)");
+        auto [result, ok, _] = Parser::parse("(1)");
         EXPECT_TRUE(ok);
         EXPECT_EQ("1", result);
     }
 
     {
-        auto [result, ok] = Parser::parse("(1 + 2)");
+        auto [result, ok, _] = Parser::parse("(1 + 2)");
         EXPECT_TRUE(ok);
         EXPECT_EQ("[+, 1, 2]", result);
     }
 
     {
-        auto [result, ok] = Parser::parse("1 + (2 + 3)");
+        auto [result, ok, _] = Parser::parse("1 + (2 + 3)");
         EXPECT_TRUE(ok);
         EXPECT_EQ("[+, 1, [+, 2, 3]]", result);
     }
 
     {
-        auto [result, ok] = Parser::parse("(1 + 2) + (3 + 4)");
+        auto [result, ok, _] = Parser::parse("(1 + 2) + (3 + 4)");
         EXPECT_TRUE(ok);
         EXPECT_EQ("[+, [+, 1, 2], [+, 3, 4]]", result);
     }
 
     {
-        auto [result, ok] = Parser::parse("1 + (2 + 3) + 4)");
+        auto [result, ok, _] = Parser::parse("1 + (2 + 3) + 4");
         EXPECT_TRUE(ok);
         EXPECT_EQ("[+, [+, 1, [+, 2, 3]], 4]", result);
+    }
+
+    {
+        auto [result, ok, index] = Parser::parse("1 + (2 + ) + 4");
+        EXPECT_FALSE(ok);
+        EXPECT_EQ(2, index);
+        EXPECT_EQ("EOF", result);
+    }
+
+    {
+        auto [result, ok, index] = Parser::parse("1 + (2 + 3) +");
+        EXPECT_FALSE(ok);
+        EXPECT_EQ(12, index);
+        EXPECT_EQ("EOF", result);
     }
 }
 

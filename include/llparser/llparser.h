@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <any>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -29,11 +30,11 @@ struct ParseResult {
         : status(status_), index(index_), value(std::forward<T>(value_)) {}
 
     template <typename T>
-    ParseResult(Status status_, size_t index_, T&& value_, std::string_view expectation_)
+    ParseResult(Status status_, size_t index_, T&& value_, std::vector<std::string> expectations_)
         : status(status_),
           index(index_),
           value(std::forward<T>(value_)),
-          expectation(expectation_) {}
+          expectations(std::move(expectations_)) {}
 
     template <typename T>
     static ParseResult Success(size_t index, T&& value_) {
@@ -41,8 +42,10 @@ struct ParseResult {
     }
 
     static ParseResult Failure(size_t index, std::string_view expectation) {
-        return {FAILURE, index, std::any(), expectation};
+        return {FAILURE, index, std::any(), {std::string(expectation)}};
     }
+
+    static ParseResult Failure(size_t index) { return {FAILURE, index, std::any()}; }
 
     bool is_success() const { return status == SUCCESS; }
 
@@ -51,10 +54,33 @@ struct ParseResult {
         return std::any_cast<T>(value);
     }
 
+    template <typename ValueType = std::any>
+    void merge(ParseResult&& other) {
+        if (status == other.status) {
+            if (is_success()) {
+                index = other.index;
+                auto& values = std::any_cast<std::vector<ValueType>&>(value);
+                if constexpr (std::is_same_v<ValueType, std::any>) {
+                    values.emplace_back(std::move(other.value));
+                } else {
+                    values.emplace_back(std::move(std::any_cast<ValueType>(other.value)));
+                }
+            } else if (other.index > index) {
+                index = other.index;
+                expectations = std::move(other.expectations);
+            } else if (other.index == index) {
+                std::move(std::begin(other.expectations), std::end(other.expectations),
+                          std::back_inserter(expectations));
+            }
+        } else {
+            *this = std::move(other);
+        }
+    }
+
     Status status = {};
     size_t index = {};
     std::any value;
-    std::string expectation;
+    std::vector<std::string> expectations;
 };
 
 template <typename T>
@@ -109,7 +135,7 @@ class LLParser {
             });
     }
 
-    template <typename Allocator>
+    template <bool case_sensitive = true, typename Allocator>
     static const LLParser* string(Allocator* allocator, std::string_view literal) {
         return _allocate<LLParser>(
             allocator, std::string(literal),
@@ -118,8 +144,18 @@ class LLParser {
 
                 const auto& begin = std::cbegin(text) + start;
                 size_t length = std::cend(text) - begin;
-                if (literal.compare(0, literal.length(), text, start,
-                                    std::min(literal.length(), length)) == 0) {
+                bool is_equivalent;
+                if constexpr (case_sensitive) {
+                    is_equivalent = (literal.compare(0, literal.length(), text, start,
+                                                     std::min(literal.length(), length)) == 0);
+                } else {
+                    is_equivalent = std::equal(
+                        literal.begin(), literal.end(), begin,
+                        begin + std::min(literal.length(), length), [](char character, char other) {
+                            return std::tolower(character) == std::tolower(other);
+                        });
+                }
+                if (is_equivalent) {
                     return ParseResult::Success(start + literal.length(),
                                                 std::string(begin, begin + literal.length()));
                 } else {
@@ -128,15 +164,21 @@ class LLParser {
             });
     }
 
-    template <typename Allocator>
+    template <bool case_sensitive = true, typename Allocator>
     static const LLParser* regex(Allocator* allocator, std::string_view literal) {
-        return LLParser::regex(allocator, literal, 0);
+        return LLParser::regex<case_sensitive, Allocator>(allocator, literal, 0);
     }
 
-    template <typename Allocator>
+    template <bool case_sensitive = true, typename Allocator>
     static const LLParser* regex(Allocator* allocator, std::string_view literal, int group) {
         std::string pattern(literal);
-        std::regex regex_pattern(fmt::format("^(?:{})", pattern));
+        std::regex regex_pattern;
+        if constexpr (case_sensitive) {
+            regex_pattern = std::regex(fmt::format("^(?:{})", pattern));
+        } else {
+            regex_pattern =
+                std::regex(fmt::format("^(?:{})", pattern), std::regex_constants::icase);
+        }
         auto attachment = std::make_tuple(std::move(pattern), group, std::move(regex_pattern));
         using PackedType = decltype(attachment);
 
@@ -149,7 +191,7 @@ class LLParser {
                 std::smatch match;
                 if (std::regex_search(std::cbegin(text) + start, std::cend(text), match,
                                       regex_pattern)) {
-                    return ParseResult::Success(start + match[group].length(), match[group].str());
+                    return ParseResult::Success(start + match[0].length(), match[group].str());
                 } else {
                     return ParseResult::Failure(start, pattern);
                 }
@@ -168,24 +210,15 @@ class LLParser {
                 const auto& parsers =
                     std::any_cast<std::vector<const LLParser*>>(parser->attachment());
 
-                std::vector<ValueType> values;
-                values.reserve(parsers.size());
-                ParseResult result;
-                auto index = start;
+                ParseResult result = ParseResult::Success(start, std::vector<ValueType>());
+                result.get<std::vector<ValueType>&>().reserve(parsers.size());
                 for (const auto* parser : parsers) {
-                    result = parser->parse(text, index);
-                    if (result.is_success()) {
-                        index = result.index;
-                        if constexpr (std::is_same_v<ValueType, std::any>) {
-                            values.emplace_back(std::move(result.value));
-                        } else {
-                            values.emplace_back(std::move(result.get<ValueType>()));
-                        }
-                    } else {
-                        return ParseResult::Failure(result.index, std::move(result.expectation));
+                    result.merge<ValueType>(parser->parse(text, result.index));
+                    if (!result.is_success()) {
+                        return result;
                     }
                 }
-                return ParseResult::Success(result.index, std::move(values));
+                return result;
             });
     }
 
@@ -201,26 +234,15 @@ class LLParser {
                 const auto& parsers =
                     std::any_cast<std::vector<const LLParser*>>(parser->attachment());
 
-                std::vector<std::string> expectations;
-                expectations.reserve(parsers.size());
-                size_t longest = 0;
+                ParseResult result = ParseResult::Failure(start);
+                result.expectations.reserve(parsers.size());
                 for (const auto* parser : parsers) {
-                    auto result = parser->parse(text, start);
+                    result.merge(parser->parse(text, start));
                     if (result.is_success()) {
                         return result;
-                    } else {
-                        if (result.index > longest) {
-                            longest = result.index;
-                            expectations.clear();
-                            expectations.emplace_back(std::move(result.expectation));
-                        } else if (result.index == longest) {
-                            expectations.emplace_back(std::move(result.expectation));
-                        }
                     }
                 }
-                return ParseResult::Failure(
-                    longest,
-                    fmt::format("{}", fmt::join(expectations.begin(), expectations.end(), " OR ")));
+                return result;
             });
     }
 
@@ -239,22 +261,21 @@ class LLParser {
                     std::any_cast<PackedType>(parser->attachment());
 
                 auto result = inner_parser->parse(text, start);
-                if (result.is_success()) {
-                    Output value;
-                    if constexpr (std::is_same_v<Input, std::any>) {
-                        value = std::apply(mapper,
-                                           std::tuple_cat(std::make_tuple(std::move(result.value)),
-                                                          std::move(arguments)));
-                    } else {
-                        value = std::apply(
-                            mapper,
-                            std::tuple_cat(std::make_tuple(std::move(result.template get<Input>())),
-                                           std::move(arguments)));
-                    }
-                    return ParseResult::Success(result.index, std::move(value));
-                } else {
-                    return ParseResult::Failure(result.index, std::move(result.expectation));
+                if (!result.is_success()) {
+                    return result;
                 }
+                Output value;
+                if constexpr (std::is_same_v<Input, std::any>) {
+                    value =
+                        std::apply(mapper, std::tuple_cat(std::make_tuple(std::move(result.value)),
+                                                          std::move(arguments)));
+                } else {
+                    value = std::apply(
+                        mapper,
+                        std::tuple_cat(std::make_tuple(std::move(result.template get<Input>())),
+                                       std::move(arguments)));
+                }
+                return ParseResult::Success(result.index, std::move(value));
             });
     }
 
@@ -289,42 +310,34 @@ class LLParser {
                 const auto& [inner_parser, min, max] =
                     std::any_cast<PackedType>(parser->attachment());
 
-                std::vector<ValueType> values;
-                ParseResult result = ParseResult::Success(start, std::any());
-                auto index = start;
+                ParseResult result = ParseResult::Success(start, std::vector<ValueType>());
                 for (uint32_t i = 0; i < max; ++i) {
-                    result = inner_parser->parse(text, index);
-                    if (!result.is_success()) {
+                    auto new_result = inner_parser->parse(text, result.index);
+                    if (!new_result.is_success()) {
                         if (i < min) {
-                            return ParseResult::Failure(result.index,
-                                                        std::move(result.expectation));
+                            return new_result;
                         }
                         break;
                     }
-                    index = result.index;
-                    if constexpr (std::is_same_v<ValueType, std::any>) {
-                        values.emplace_back(std::move(result.value));
-                    } else {
-                        values.emplace_back(std::move(result.template get<ValueType>()));
-                    }
+                    result.merge<ValueType>(std::move(new_result));
                 }
-                return ParseResult::Success(result.index, std::move(values));
+                return result;
             });
     }
 
     template <typename ValueType = std::any, typename Allocator>
     const LLParser* times(Allocator* allocator, uint32_t num) const {
-        return this->times(allocator, num, num);
+        return this->times<ValueType>(allocator, num, num);
     }
 
     template <typename ValueType = std::any, typename Allocator>
     const LLParser* atMost(Allocator* allocator, uint32_t num) const {
-        return this->times(allocator, 0, num);
+        return this->times<ValueType>(allocator, 0, num);
     }
 
     template <typename ValueType = std::any, typename Allocator>
     const LLParser* atLeast(Allocator* allocator, uint32_t num) const {
-        return this->times(allocator, num, std::numeric_limits<uint32_t>::max());
+        return this->times<ValueType>(allocator, num, std::numeric_limits<uint32_t>::max());
     }
 
     template <typename ValueType = std::any, typename Allocator>
@@ -333,24 +346,17 @@ class LLParser {
             allocator, this, [](const auto* parser, const auto& text, auto start) -> auto{
                 const auto* inner_parser = std::any_cast<const LLParser*>(parser->attachment());
 
-                std::vector<ValueType> values;
-                ParseResult result = ParseResult::Success(start, std::any());
-                auto index = start;
-                while (index < text.length()) {
-                    result = inner_parser->parse(text, index);
-                    if (!result.is_success()) {
+                ParseResult result = ParseResult::Success(start, std::vector<ValueType>());
+                while (result.index < text.length()) {
+                    auto new_result = inner_parser->parse(text, result.index);
+                    if (!new_result.is_success()) {
                         break;
-                    } else if (result.index == index) {
-                        return ParseResult::Failure(index, "");
+                    } else if (new_result.index == result.index) {
+                        return ParseResult::Failure(new_result.index, "");
                     }
-                    index = result.index;
-                    if constexpr (std::is_same_v<ValueType, std::any>) {
-                        values.emplace_back(std::move(result.value));
-                    } else {
-                        values.emplace_back(std::move(result.template get<ValueType>()));
-                    }
+                    result.merge<ValueType>(std::move(new_result));
                 }
-                return ParseResult::Success(result.index, std::move(values));
+                return result;
             });
     }
 

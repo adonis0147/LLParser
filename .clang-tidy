@@ -10,3 +10,5 @@ Checks: |
   -modernize-use-nodiscard,
   readability-*,
   -readability-else-after-return,
+  -readability-function-cognitive-complexity,
+  -readability-magic-numbers,

@@ -21,7 +21,7 @@ includes = include_directories(['include', 'examples'])
 test_sources = []
 subdir('test')
 
-test_cpp_args = '-fsanitize=address'
+test_cpp_args = ['-fno-access-control', '-fsanitize=address']
 test_link_args = '-lasan'
 
 test_name = 'llparser_test'
